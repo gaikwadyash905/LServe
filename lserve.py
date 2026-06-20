@@ -17,6 +17,11 @@ from typing import Any
 DEFAULT_SHORTLIST_PATH = Path(".lserve_shortlist.json")
 DEFAULT_LAST_SEARCH_PATH = Path(".lserve_last_search.json")
 OPENALEX_WORKS_URL = "https://api.openalex.org/works"
+REQUEST_TIMEOUT_SECONDS = 20
+OVERFETCH_FACTOR = 3
+MIN_FETCH_SIZE = 25
+MAX_AUTHORS_BEFORE_ET_AL = 4
+MAX_FILENAME_STEM_LENGTH = 80
 
 
 @dataclass
@@ -34,7 +39,7 @@ class Paper:
 
 def _fetch_json(url: str) -> dict[str, Any]:
     try:
-        with urllib.request.urlopen(url, timeout=20) as response:
+        with urllib.request.urlopen(url, timeout=REQUEST_TIMEOUT_SECONDS) as response:
             return json.loads(response.read().decode("utf-8"))
     except URLError as exc:
         raise RuntimeError(f"Failed to fetch OpenAlex data: {url}") from exc
@@ -61,8 +66,8 @@ def _to_citation(raw: dict[str, Any]) -> str:
     authors = raw.get("authorships", [])
     names = [a.get("author", {}).get("display_name") for a in authors]
     names = [n for n in names if n]
-    author_text = ", ".join(names[:4]) if names else "Unknown"
-    if len(names) > 4:
+    author_text = ", ".join(names[:MAX_AUTHORS_BEFORE_ET_AL]) if names else "Unknown"
+    if len(names) > MAX_AUTHORS_BEFORE_ET_AL:
         author_text += " et al."
     title = raw.get("display_name", "Untitled")
     year = raw.get("publication_year")
@@ -108,7 +113,10 @@ def search_papers(
     open_access_only: bool = False,
     limit: int = 20,
 ) -> list[Paper]:
-    query: dict[str, str] = {"search": keywords, "per-page": str(max(limit * 3, 25))}
+    query: dict[str, str] = {
+        "search": keywords,
+        "per-page": str(max(limit * OVERFETCH_FACTOR, MIN_FETCH_SIZE)),
+    }
     url = f"{OPENALEX_WORKS_URL}?{urllib.parse.urlencode(query)}"
     payload = _fetch_json(url)
     papers = [_paper_from_openalex(item) for item in payload.get("results", [])]
@@ -169,10 +177,12 @@ class Shortlist:
             if not source:
                 continue
             extension = ".pdf" if item.pdf_url else ".html"
-            output_path = _next_unique_path(target_dir, _safe_filename(item.title)[:80], extension)
+            output_path = _next_unique_path(
+                target_dir, _safe_filename(item.title)[:MAX_FILENAME_STEM_LENGTH], extension
+            )
             try:
                 urllib.request.urlretrieve(source, output_path)
-            except Exception as exc:
+            except (URLError, OSError) as exc:
                 print(f"Failed to download '{item.title}' ({item.id}): {exc}")
                 continue
             downloaded.append(output_path)

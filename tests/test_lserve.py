@@ -3,7 +3,7 @@ import tempfile
 import unittest
 from pathlib import Path
 from urllib.error import URLError
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import lserve
 
@@ -55,6 +55,16 @@ class SearchFilterTests(unittest.TestCase):
         with patch("urllib.request.urlopen", side_effect=URLError("boom")):
             with self.assertRaisesRegex(RuntimeError, "Failed to fetch OpenAlex data"):
                 lserve._fetch_json("https://api.openalex.org/works?search=x")
+
+    def test_fetch_json_uses_request_timeout(self):
+        mock_response = MagicMock()
+        mock_response.__enter__.return_value.read.return_value = b'{"results":[]}'
+        with patch("urllib.request.urlopen", return_value=mock_response) as mocked_open:
+            lserve._fetch_json("https://api.openalex.org/works?search=x")
+        mocked_open.assert_called_once_with(
+            "https://api.openalex.org/works?search=x",
+            timeout=lserve.REQUEST_TIMEOUT_SECONDS,
+        )
 
 
 class ShortlistTests(unittest.TestCase):
@@ -162,6 +172,45 @@ class ShortlistTests(unittest.TestCase):
                 files = shortlist.download_all(out_dir)
 
             self.assertEqual([f.name for f in files], ["Same_Name.pdf", "Same_Name_2.pdf"])
+
+    def test_download_all_continues_after_failure(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            shortlist = lserve.Shortlist(Path(tmp) / "shortlist.json")
+            out_dir = Path(tmp) / "out"
+            shortlist.items = [
+                lserve.Paper(
+                    id="1",
+                    title="Fails",
+                    journal="J1",
+                    year=2024,
+                    doi=None,
+                    landing_page_url="https://example.com/1",
+                    pdf_url="https://example.com/1.pdf",
+                    is_open_access=True,
+                    citation="c1",
+                ),
+                lserve.Paper(
+                    id="2",
+                    title="Succeeds",
+                    journal="J2",
+                    year=2024,
+                    doi=None,
+                    landing_page_url="https://example.com/2",
+                    pdf_url="https://example.com/2.pdf",
+                    is_open_access=True,
+                    citation="c2",
+                ),
+            ]
+
+            def fake_retrieve(url, path):
+                if url.endswith("/1.pdf"):
+                    raise URLError("down")
+                Path(path).write_text("ok", encoding="utf-8")
+
+            with patch("urllib.request.urlretrieve", side_effect=fake_retrieve):
+                files = shortlist.download_all(out_dir)
+
+            self.assertEqual([f.name for f in files], ["Succeeds.pdf"])
 
 
 class CitationExportTests(unittest.TestCase):
