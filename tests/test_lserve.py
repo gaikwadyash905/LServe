@@ -2,6 +2,7 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
+from urllib.error import URLError
 from unittest.mock import patch
 
 import lserve
@@ -49,6 +50,11 @@ class SearchFilterTests(unittest.TestCase):
 
         self.assertEqual(len(results), 1)
         self.assertEqual(results[0].title, "Paper A")
+
+    def test_fetch_json_wraps_url_errors(self):
+        with patch("urllib.request.urlopen", side_effect=URLError("boom")):
+            with self.assertRaisesRegex(RuntimeError, "Failed to fetch OpenAlex data"):
+                lserve._fetch_json("https://api.openalex.org/works?search=x")
 
 
 class ShortlistTests(unittest.TestCase):
@@ -117,6 +123,45 @@ class ShortlistTests(unittest.TestCase):
             self.assertEqual(len(files), 2)
             self.assertEqual(calls[0][0], "https://example.com/1.pdf")
             self.assertEqual(calls[1][0], "https://example.com/2")
+            self.assertEqual(calls[0][1].name, "With_PDF.pdf")
+            self.assertEqual(calls[1][1].name, "Without_PDF.html")
+            self.assertTrue(calls[0][1].exists())
+            self.assertTrue(calls[1][1].exists())
+
+    def test_download_all_uses_unique_filenames(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            shortlist_path = Path(tmp) / "shortlist.json"
+            out_dir = Path(tmp) / "out"
+            shortlist = lserve.Shortlist(shortlist_path)
+            shortlist.items = [
+                lserve.Paper(
+                    id="1",
+                    title="Same Name",
+                    journal="J1",
+                    year=2024,
+                    doi=None,
+                    landing_page_url="https://example.com/1",
+                    pdf_url="https://example.com/1.pdf",
+                    is_open_access=True,
+                    citation="c1",
+                ),
+                lserve.Paper(
+                    id="2",
+                    title="Same Name",
+                    journal="J2",
+                    year=2024,
+                    doi=None,
+                    landing_page_url="https://example.com/2",
+                    pdf_url="https://example.com/2.pdf",
+                    is_open_access=True,
+                    citation="c2",
+                ),
+            ]
+
+            with patch("urllib.request.urlretrieve", side_effect=lambda url, path: Path(path).write_text("x", encoding="utf-8")):
+                files = shortlist.download_all(out_dir)
+
+            self.assertEqual([f.name for f in files], ["Same_Name.pdf", "Same_Name_2.pdf"])
 
 
 class CitationExportTests(unittest.TestCase):

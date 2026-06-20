@@ -8,6 +8,7 @@ import json
 import re
 import urllib.parse
 import urllib.request
+from urllib.error import URLError
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
@@ -32,13 +33,28 @@ class Paper:
 
 
 def _fetch_json(url: str) -> dict[str, Any]:
-    with urllib.request.urlopen(url, timeout=20) as response:
-        return json.loads(response.read().decode("utf-8"))
+    try:
+        with urllib.request.urlopen(url, timeout=20) as response:
+            return json.loads(response.read().decode("utf-8"))
+    except URLError as exc:
+        raise RuntimeError(f"Failed to fetch OpenAlex data: {url}") from exc
 
 
 def _safe_filename(name: str) -> str:
     cleaned = re.sub(r"[^a-zA-Z0-9._-]+", "_", name).strip("_")
     return cleaned or "paper"
+
+
+def _next_unique_path(target_dir: Path, base_name: str, extension: str) -> Path:
+    candidate = target_dir / f"{base_name}{extension}"
+    if not candidate.exists():
+        return candidate
+    counter = 2
+    while True:
+        candidate = target_dir / f"{base_name}_{counter}{extension}"
+        if not candidate.exists():
+            return candidate
+        counter += 1
 
 
 def _to_citation(raw: dict[str, Any]) -> str:
@@ -153,9 +169,12 @@ class Shortlist:
             if not source:
                 continue
             extension = ".pdf" if item.pdf_url else ".html"
-            output_name = f"{_safe_filename(item.title)[:80]}{extension}"
-            output_path = target_dir / output_name
-            urllib.request.urlretrieve(source, output_path)
+            output_path = _next_unique_path(target_dir, _safe_filename(item.title)[:80], extension)
+            try:
+                urllib.request.urlretrieve(source, output_path)
+            except Exception as exc:
+                print(f"Failed to download '{item.title}' ({item.id}): {exc}")
+                continue
             downloaded.append(output_path)
         return downloaded
 
