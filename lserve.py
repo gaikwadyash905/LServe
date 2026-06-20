@@ -20,7 +20,7 @@ OPENALEX_WORKS_URL = "https://api.openalex.org/works"
 REQUEST_TIMEOUT_SECONDS = 20
 OVERFETCH_FACTOR = 3
 MIN_FETCH_SIZE = 25
-MAX_AUTHORS_BEFORE_ET_AL = 4
+MAX_AUTHORS_SHOWN = 4
 MAX_FILENAME_STEM_LENGTH = 80
 
 
@@ -66,8 +66,8 @@ def _to_citation(raw: dict[str, Any]) -> str:
     authors = raw.get("authorships", [])
     names = [a.get("author", {}).get("display_name") for a in authors]
     names = [n for n in names if n]
-    author_text = ", ".join(names[:MAX_AUTHORS_BEFORE_ET_AL]) if names else "Unknown"
-    if len(names) > MAX_AUTHORS_BEFORE_ET_AL:
+    author_text = ", ".join(names[:MAX_AUTHORS_SHOWN]) if names else "Unknown"
+    if len(names) > MAX_AUTHORS_SHOWN:
         author_text += " et al."
     title = raw.get("display_name", "Untitled")
     year = raw.get("publication_year")
@@ -113,6 +113,7 @@ def search_papers(
     open_access_only: bool = False,
     limit: int = 20,
 ) -> list[Paper]:
+    # Overfetch because we apply journal/year/open-access filtering after retrieval.
     query: dict[str, str] = {
         "search": keywords,
         "per-page": str(max(limit * OVERFETCH_FACTOR, MIN_FETCH_SIZE)),

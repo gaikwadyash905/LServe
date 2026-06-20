@@ -168,7 +168,11 @@ class ShortlistTests(unittest.TestCase):
                 ),
             ]
 
-            with patch("urllib.request.urlretrieve", side_effect=lambda url, path: Path(path).write_text("x", encoding="utf-8")):
+            def fake_retrieve(url, path):
+                Path(path).write_text("x", encoding="utf-8")
+                return None
+
+            with patch("urllib.request.urlretrieve", side_effect=fake_retrieve):
                 files = shortlist.download_all(out_dir)
 
             self.assertEqual([f.name for f in files], ["Same_Name.pdf", "Same_Name_2.pdf"])
