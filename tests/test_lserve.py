@@ -66,6 +66,13 @@ class SearchFilterTests(unittest.TestCase):
             timeout=lserve.REQUEST_TIMEOUT_SECONDS,
         )
 
+    def test_fetch_json_wraps_invalid_json(self):
+        mock_response = MagicMock()
+        mock_response.__enter__.return_value.read.return_value = b"{bad-json"
+        with patch("urllib.request.urlopen", return_value=mock_response):
+            with self.assertRaisesRegex(RuntimeError, "Invalid JSON from OpenAlex API"):
+                lserve._fetch_json("https://api.openalex.org/works?search=x")
+
 
 class ShortlistTests(unittest.TestCase):
     def test_add_is_deduplicated_and_persisted(self):
@@ -123,11 +130,11 @@ class ShortlistTests(unittest.TestCase):
 
             calls = []
 
-            def fake_retrieve(url, path):
+            def fake_download(url, path):
                 calls.append((url, Path(path)))
                 Path(path).write_text("x", encoding="utf-8")
 
-            with patch("urllib.request.urlretrieve", side_effect=fake_retrieve):
+            with patch("lserve._download_file", side_effect=fake_download):
                 files = shortlist.download_all(out_dir)
 
             self.assertEqual(len(files), 2)
@@ -168,10 +175,10 @@ class ShortlistTests(unittest.TestCase):
                 ),
             ]
 
-            def fake_retrieve(url, path):
+            def fake_download(url, path):
                 Path(path).write_text("x", encoding="utf-8")
 
-            with patch("urllib.request.urlretrieve", side_effect=fake_retrieve):
+            with patch("lserve._download_file", side_effect=fake_download):
                 files = shortlist.download_all(out_dir)
 
             self.assertEqual([f.name for f in files], ["Same_Name.pdf", "Same_Name_2.pdf"])
@@ -205,15 +212,37 @@ class ShortlistTests(unittest.TestCase):
                 ),
             ]
 
-            def fake_retrieve(url, path):
+            def fake_download(url, path):
                 if url.endswith("/1.pdf"):
-                    raise URLError("down")
+                    raise RuntimeError("down")
                 Path(path).write_text("ok", encoding="utf-8")
 
-            with patch("urllib.request.urlretrieve", side_effect=fake_retrieve):
+            with patch("lserve._download_file", side_effect=fake_download):
                 files = shortlist.download_all(out_dir)
 
             self.assertEqual([f.name for f in files], ["Succeeds.pdf"])
+
+    def test_download_all_skips_items_without_urls(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            shortlist = lserve.Shortlist(Path(tmp) / "shortlist.json")
+            out_dir = Path(tmp) / "out"
+            shortlist.items = [
+                lserve.Paper(
+                    id="1",
+                    title="No URL",
+                    journal="J",
+                    year=2024,
+                    doi=None,
+                    landing_page_url=None,
+                    pdf_url=None,
+                    is_open_access=False,
+                    citation="c",
+                )
+            ]
+            with patch("lserve._download_file") as mocked_download:
+                files = shortlist.download_all(out_dir)
+            self.assertEqual(files, [])
+            mocked_download.assert_not_called()
 
 
 class CitationExportTests(unittest.TestCase):

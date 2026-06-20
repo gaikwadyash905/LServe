@@ -9,6 +9,7 @@ import re
 import urllib.parse
 import urllib.request
 from urllib.error import URLError
+from json import JSONDecodeError
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
@@ -20,6 +21,7 @@ OPENALEX_WORKS_URL = "https://api.openalex.org/works"
 REQUEST_TIMEOUT_SECONDS = 20
 OVERFETCH_FACTOR = 3
 MIN_FETCH_SIZE = 25
+MAX_FETCH_SIZE = 200
 MAX_AUTHORS_SHOWN = 4
 MAX_FILENAME_STEM_LENGTH = 80
 
@@ -43,6 +45,8 @@ def _fetch_json(url: str) -> dict[str, Any]:
             return json.loads(response.read().decode("utf-8"))
     except URLError as exc:
         raise RuntimeError(f"Failed to fetch OpenAlex data: {url}") from exc
+    except JSONDecodeError as exc:
+        raise RuntimeError(f"Invalid JSON from OpenAlex API: {url}") from exc
 
 
 def _safe_filename(name: str) -> str:
@@ -60,6 +64,14 @@ def _next_unique_path(target_dir: Path, base_name: str, extension: str) -> Path:
         if not candidate.exists():
             return candidate
         counter += 1
+
+
+def _download_file(source_url: str, destination_path: Path) -> None:
+    try:
+        with urllib.request.urlopen(source_url, timeout=REQUEST_TIMEOUT_SECONDS) as response:
+            destination_path.write_bytes(response.read())
+    except (URLError, OSError) as exc:
+        raise RuntimeError(f"Failed downloading {source_url}") from exc
 
 
 def _to_citation(raw: dict[str, Any]) -> str:
@@ -116,7 +128,7 @@ def search_papers(
     # Overfetch because we apply journal/year/open-access filtering after retrieval.
     query: dict[str, str] = {
         "search": keywords,
-        "per-page": str(max(limit * OVERFETCH_FACTOR, MIN_FETCH_SIZE)),
+        "per-page": str(min(max(limit * OVERFETCH_FACTOR, MIN_FETCH_SIZE), MAX_FETCH_SIZE)),
     }
     url = f"{OPENALEX_WORKS_URL}?{urllib.parse.urlencode(query)}"
     payload = _fetch_json(url)
@@ -150,7 +162,10 @@ class Shortlist:
         if not self.path.exists():
             self.items = []
             return
-        raw = json.loads(self.path.read_text(encoding="utf-8"))
+        try:
+            raw = json.loads(self.path.read_text(encoding="utf-8"))
+        except JSONDecodeError as exc:
+            raise RuntimeError(f"Invalid shortlist JSON: {self.path}") from exc
         self.items = [Paper(**item) for item in raw]
 
     def save(self) -> None:
@@ -182,8 +197,8 @@ class Shortlist:
                 target_dir, _safe_filename(item.title)[:MAX_FILENAME_STEM_LENGTH], extension
             )
             try:
-                urllib.request.urlretrieve(source, output_path)
-            except (URLError, OSError) as exc:
+                _download_file(source, output_path)
+            except RuntimeError as exc:
                 print(f"Failed to download '{item.title}' ({item.id}): {exc}")
                 continue
             downloaded.append(output_path)
@@ -203,7 +218,10 @@ class SearchCache:
     def load(self) -> list[Paper]:
         if not self.path.exists():
             return []
-        raw = json.loads(self.path.read_text(encoding="utf-8"))
+        try:
+            raw = json.loads(self.path.read_text(encoding="utf-8"))
+        except JSONDecodeError as exc:
+            raise RuntimeError(f"Invalid search cache JSON: {self.path}") from exc
         return [Paper(**item) for item in raw]
 
 
@@ -275,7 +293,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "add":
         cached = cache.load()
         if not cached:
-            print("No cached search results. Run `search` first.")
+            print("No cached search results. Run 'search' first.")
             return 1
         if args.index < 1 or args.index > len(cached):
             print(f"Index out of range. Choose 1..{len(cached)}")
