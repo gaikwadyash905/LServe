@@ -254,12 +254,12 @@ def _print_search_results(results: list[Paper]) -> None:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Literature survey helper")
+    parser = argparse.ArgumentParser(description="Literature Survey Helper")
     sub = parser.add_subparsers(dest="command", required=True)
 
     search = sub.add_parser("search", help="Search papers")
     search.add_argument("keywords", help="Search keywords")
-    search.add_argument("--journals", help="Comma separated journal names")
+    search.add_argument("--journals", help="Comma-separated journal names")
     search.add_argument("--year-from", type=int)
     search.add_argument("--year-to", type=int)
     search.add_argument("--open-access", action="store_true")
