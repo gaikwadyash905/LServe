@@ -9,7 +9,7 @@ import lserve
 
 
 class SearchFilterTests(unittest.TestCase):
-    def test_search_filters_journal_year_and_open_access(self):
+    def test_search_filters_by_journal_year_and_open_access(self):
         payload = {
             "results": [
                 {

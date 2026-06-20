@@ -24,6 +24,7 @@ MIN_FETCH_SIZE = 25
 MAX_FETCH_SIZE = 200
 MAX_AUTHORS_SHOWN = 4
 MAX_FILENAME_STEM_LENGTH = 80
+MAX_FILENAME_ATTEMPTS = 1000
 
 
 @dataclass
@@ -59,11 +60,12 @@ def _next_unique_path(target_dir: Path, base_name: str, extension: str) -> Path:
     if not candidate.exists():
         return candidate
     counter = 2
-    while True:
+    while counter <= MAX_FILENAME_ATTEMPTS:
         candidate = target_dir / f"{base_name}_{counter}{extension}"
         if not candidate.exists():
             return candidate
         counter += 1
+    raise RuntimeError(f"Could not create unique filename for '{base_name}' after {MAX_FILENAME_ATTEMPTS} tries")
 
 
 def _download_file(source_url: str, destination_path: Path) -> None:
@@ -72,6 +74,10 @@ def _download_file(source_url: str, destination_path: Path) -> None:
             destination_path.write_bytes(response.read())
     except (URLError, OSError) as exc:
         raise RuntimeError(f"Failed downloading {source_url}") from exc
+
+
+def _calculate_fetch_size(limit: int) -> int:
+    return min(max(limit * OVERFETCH_FACTOR, MIN_FETCH_SIZE), MAX_FETCH_SIZE)
 
 
 def _to_citation(raw: dict[str, Any]) -> str:
@@ -128,7 +134,7 @@ def search_papers(
     # Overfetch because we apply journal/year/open-access filtering after retrieval.
     query: dict[str, str] = {
         "search": keywords,
-        "per-page": str(min(max(limit * OVERFETCH_FACTOR, MIN_FETCH_SIZE), MAX_FETCH_SIZE)),
+        "per-page": str(_calculate_fetch_size(limit)),
     }
     url = f"{OPENALEX_WORKS_URL}?{urllib.parse.urlencode(query)}"
     payload = _fetch_json(url)
@@ -183,7 +189,10 @@ class Shortlist:
 
     def export_citations(self, path: Path) -> None:
         lines = [item.citation for item in self.items]
-        path.write_text("\n".join(lines) + ("\n" if lines else ""), encoding="utf-8")
+        content = "\n".join(lines)
+        if content:
+            content += "\n"
+        path.write_text(content, encoding="utf-8")
 
     def download_all(self, target_dir: Path) -> list[Path]:
         target_dir.mkdir(parents=True, exist_ok=True)
