@@ -170,7 +170,6 @@ class ShortlistTests(unittest.TestCase):
 
             def fake_retrieve(url, path):
                 Path(path).write_text("x", encoding="utf-8")
-                return None
 
             with patch("urllib.request.urlretrieve", side_effect=fake_retrieve):
                 files = shortlist.download_all(out_dir)
